@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useTrading } from '../context/TradingContext';
 import { TradingChart } from './TradingChart';
-import { TrendingUp, TrendingDown, DollarSign, Briefcase, Award } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Briefcase, Award, Search } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const {
@@ -15,10 +15,13 @@ export const Dashboard: React.FC = () => {
     buyStock,
     sellStock,
     setSelectedStockSymbol,
-    leaveTournament
+    leaveTournament,
+    searchAndAddStock
   } = useTrading();
 
   const [tradeQuantity, setTradeQuantity] = useState<number>(10);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchLoading, setSearchLoading] = useState<boolean>(false);
 
   const portfolio = activeTournamentId ? activeTournamentPortfolio! : mainPortfolio;
   const selectedStock = stocks.find(s => s.symbol === selectedStockSymbol) || stocks[0];
@@ -32,6 +35,22 @@ export const Dashboard: React.FC = () => {
   const handleSell = () => {
     if (tradeQuantity <= 0) return;
     sellStock(selectedStock.symbol, tradeQuantity);
+  };
+
+  const handleSearchSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = searchQuery.trim();
+    if (!trimmed) return;
+
+    setSearchLoading(true);
+    const success = await searchAndAddStock(trimmed);
+    setSearchLoading(false);
+
+    if (success) {
+      setSearchQuery('');
+    } else {
+      alert(`לא נמצאו נתוני מסחר עבור הסימול "${trimmed.toUpperCase()}". אנא ודא שהסימול נכון ותואם ל-Yahoo Finance (למשל: GOOG, META, BTC-USD, SPY).`);
+    }
   };
 
   // Calculate current user holdings of selected stock
@@ -52,7 +71,7 @@ export const Dashboard: React.FC = () => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       {/* Active Tournament Bar */}
       {activeTournamentId && tournament && (
-        <div className="glass-panel gravity-card" style={{
+        <div className="glass-panel" style={{
           padding: '16px 24px',
           background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(6, 182, 212, 0.05) 100%)',
           borderColor: 'rgba(139, 92, 246, 0.3)',
@@ -91,6 +110,55 @@ export const Dashboard: React.FC = () => {
         </div>
       )}
 
+      {/* Dynamic Search Bar */}
+      <form onSubmit={handleSearchSubmit} style={{ 
+        display: 'flex', 
+        gap: '12px', 
+        width: '100%', 
+        maxWidth: '750px', 
+        margin: '0 auto 8px auto', 
+        position: 'relative' 
+      }}>
+        <div style={{ position: 'relative', flexGrow: 1 }}>
+          <input
+            type="text"
+            className="form-input"
+            placeholder="חפש והוסף מניות למעקב בזמן אמת (למשל: GOOG, META, NFLX, BTC-USD, SPY, QQQ)..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            disabled={searchLoading}
+            style={{ 
+              height: '48px', 
+              borderRadius: '24px', 
+              paddingRight: '44px', 
+              paddingLeft: '20px', 
+              textAlign: 'right',
+              fontSize: '0.95rem'
+            }}
+          />
+          <Search size={18} style={{ 
+            position: 'absolute', 
+            top: '15px', 
+            right: '18px', 
+            color: 'var(--text-muted)' 
+          }} />
+        </div>
+        <button
+          type="submit"
+          className="btn btn-primary"
+          disabled={searchLoading}
+          style={{ 
+            height: '48px', 
+            borderRadius: '24px', 
+            padding: '0 28px', 
+            fontSize: '0.9rem',
+            minWidth: '130px'
+          }}
+        >
+          {searchLoading ? 'מחפש שער...' : 'חפש והוסף'}
+        </button>
+      </form>
+
       {/* Stock Ticker Bar */}
       <div className="ticker-bar">
         {stocks.map(stock => {
@@ -99,7 +167,7 @@ export const Dashboard: React.FC = () => {
           return (
             <div
               key={stock.symbol}
-              className={`glass-panel ticker-card gravity-card ${isSelected ? 'active-ticker' : ''}`}
+              className={`glass-panel ticker-card ${isSelected ? 'active-ticker' : ''}`}
               onClick={() => setSelectedStockSymbol(stock.symbol)}
               style={{
                 borderColor: isSelected ? 'var(--accent-purple)' : 'var(--glass-border)',
@@ -128,7 +196,7 @@ export const Dashboard: React.FC = () => {
 
       {/* Main Stats Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
-        <div className="glass-panel gravity-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }} id="stats-total-val">
+        <div className="glass-panel" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }} id="stats-total-val">
           <div className="avatar-circle" style={{ background: 'var(--accent-purple-glow)', color: 'var(--accent-purple)' }}>
             <Briefcase size={20} />
           </div>
@@ -140,7 +208,7 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="glass-panel gravity-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }} id="stats-cash-bal">
+        <div className="glass-panel" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }} id="stats-cash-bal">
           <div className="avatar-circle" style={{ background: 'var(--accent-cyan-glow)', color: 'var(--accent-cyan)' }}>
             <DollarSign size={20} />
           </div>
@@ -152,7 +220,7 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="glass-panel gravity-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }} id="stats-pl-perf">
+        <div className="glass-panel" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }} id="stats-pl-perf">
           <div className="avatar-circle" style={{
             background: isProfit ? 'var(--trend-up-glow)' : 'var(--trend-down-glow)',
             color: isProfit ? 'var(--trend-up)' : 'var(--trend-down)'
@@ -179,7 +247,7 @@ export const Dashboard: React.FC = () => {
         <TradingChart stock={selectedStock} />
 
         {/* Right Side - Trading Form */}
-        <div className="glass-panel gravity-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }} id="order-placement-panel">
+        <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }} id="order-placement-panel">
           <div>
             <h3 style={{ fontSize: '1.2rem', marginBottom: '4px' }}>ביצוע עסקאות וירטואליות</h3>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>מסחר בזמן אמת בנכס {selectedStock.symbol}</p>

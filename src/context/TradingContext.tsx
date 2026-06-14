@@ -22,6 +22,7 @@ interface TradingContextType {
   leaveTournament: () => void;
   setSelectedStockSymbol: (symbol: string) => void;
   resetMainPortfolio: () => void;
+  searchAndAddStock: (symbol: string) => Promise<boolean>;
 }
 
 const TradingContext = createContext<TradingContextType | undefined>(undefined);
@@ -109,7 +110,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     const syncRealMarketPrices = async () => {
       console.log('Syncing baseline prices with Yahoo Finance...');
-      const symbols = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN'];
+      const symbols = stocksRef.current.map(s => s.symbol);
       const updatedList = [...stocksRef.current];
       
       let changed = false;
@@ -464,6 +465,42 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.removeItem('main_portfolio');
   };
 
+  const searchAndAddStock = async (symbol: string): Promise<boolean> => {
+    const cleanSymbol = symbol.trim().toUpperCase();
+    if (!cleanSymbol) return false;
+
+    // Check if already in list
+    const existing = stocks.find(s => s.symbol === cleanSymbol);
+    if (existing) {
+      setSelectedStockSymbol(cleanSymbol);
+      return true;
+    }
+
+    try {
+      const realData = await fetchRealStockData(cleanSymbol);
+      if (realData) {
+        const newStock: Stock = {
+          symbol: realData.symbol,
+          name: realData.name,
+          price: realData.price,
+          previousPrice: realData.price,
+          history: realData.history,
+          change24h: realData.change24h,
+          high: realData.high,
+          low: realData.low
+        };
+
+        setStocks(prev => [...prev, newStock]);
+        setSelectedStockSymbol(cleanSymbol);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  };
+
   // Live value update for main portfolio whenever stock prices tick
   useEffect(() => {
     if (activeTournamentId) return;
@@ -506,6 +543,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         leaveTournament,
         setSelectedStockSymbol,
         resetMainPortfolio,
+        searchAndAddStock,
       }}
     >
       {children}

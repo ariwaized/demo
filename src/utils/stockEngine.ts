@@ -56,9 +56,10 @@ export const INITIAL_STOCKS: Stock[] = [
 /**
  * Fetches real stock data from Yahoo Finance via a free CORS proxy
  */
-export async function fetchRealStockData(symbol: string): Promise<{ price: number, history: number[], high: number, low: number, change24h: number } | null> {
+export async function fetchRealStockData(symbol: string): Promise<{ symbol: string, name: string, price: number, history: number[], high: number, low: number, change24h: number } | null> {
   try {
-    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=2m&range=1d`;
+    const cleanSymbol = symbol.trim().toUpperCase();
+    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?interval=2m&range=1d`;
     const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`;
     
     const res = await fetch(proxyUrl);
@@ -93,7 +94,25 @@ export async function fetchRealStockData(symbol: string): Promise<{ price: numbe
     
     const change24h = Number((((price - previousClose) / previousClose) * 100).toFixed(2));
 
+    // Generate nice name for visual output
+    let name = `${cleanSymbol} Corp`;
+    if (cleanSymbol.endsWith('-USD')) {
+      name = `${cleanSymbol.split('-')[0]} Crypto`;
+    } else if (cleanSymbol === 'SPY') {
+      name = 'SPDR S&P 500 ETF';
+    } else if (cleanSymbol === 'QQQ') {
+      name = 'Invesco QQQ Trust';
+    } else if (cleanSymbol === 'GOOGL' || cleanSymbol === 'GOOG') {
+      name = 'Alphabet Inc.';
+    } else if (cleanSymbol === 'META') {
+      name = 'Meta Platforms, Inc.';
+    } else if (cleanSymbol === 'NFLX') {
+      name = 'Netflix, Inc.';
+    }
+
     return {
+      symbol: cleanSymbol,
+      name,
       price,
       history: quotes,
       high,
