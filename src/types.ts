@@ -76,3 +76,19 @@ export interface UserProfile {
   username: string;
   avatarColor: string;
 }
+
+export interface AIDelegation {
+  strategy: AIStrategy;
+  allocatedCash: number;
+  holdings: { [symbol: string]: Holding };
+  totalValue: number;
+  initialValue: number;
+  active: boolean;
+}
+
+export interface ActivityLog {
+  id: string;
+  timestamp: string;
+  message: string;
+  badgeColor: string;
+}

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import type { Stock, Portfolio, Holding, Transaction, Tournament, LeaderboardEntry, UserProfile } from '../types';
+import type { Stock, Portfolio, Holding, Transaction, Tournament, LeaderboardEntry, UserProfile, AIDelegation, ActivityLog, AIStrategy } from '../types';
 import { INITIAL_STOCKS, updateStockPrices, fetchRealStockData } from '../utils/stockEngine';
-import { INITIAL_AGENTS, runAIAgentTrades } from '../utils/aiAgents';
+import { INITIAL_AGENTS, runAIAgentTrades, runDelegatedAITrades } from '../utils/aiAgents';
 
 interface TradingContextType {
   stocks: Stock[];
@@ -23,6 +23,10 @@ interface TradingContextType {
   setSelectedStockSymbol: (symbol: string) => void;
   resetMainPortfolio: () => void;
   searchAndAddStock: (symbol: string) => Promise<boolean>;
+  aiDelegation: AIDelegation | null;
+  activityLogs: ActivityLog[];
+  delegateToAI: (strategy: AIStrategy, amount: number) => void;
+  stopAIDelegation: () => void;
 }
 
 const TradingContext = createContext<TradingContextType | undefined>(undefined);
@@ -48,6 +52,18 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   });
 
   const [selectedAgentIdForModal, setSelectedAgentIdForModal] = useState<string | null>(null);
+
+  // Background bots for standard trading mode (persistent, non-tournament)
+  const [backgroundAgents, setBackgroundAgents] = useState<any[]>(() => {
+    return INITIAL_AGENTS.map(agent => ({
+      ...agent,
+      cashBalance: 100000,
+      totalValue: 100000,
+      holdings: {},
+      tradesCount: 0,
+      transactions: []
+    }));
+  });
 
   const [tournaments, setTournaments] = useState<Tournament[]>([
     {
@@ -79,11 +95,21 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [selectedStockSymbol, setSelectedStockSymbol] = useState<string>('NVDA');
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
 
+  // AI Copy-Trading Delegation states
+  const [aiDelegation, setAiDelegation] = useState<AIDelegation | null>(() => {
+    const saved = localStorage.getItem('ai_delegation');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+
   // Using refs to prevent stale closures in interval
   const stocksRef = useRef(stocks);
   const activeTournamentIdRef = useRef(activeTournamentId);
   const tournamentsRef = useRef(tournaments);
   const tournamentPortfoliosRef = useRef(tournamentPortfolios);
+  const backgroundAgentsRef = useRef(backgroundAgents);
+  const aiDelegationRef = useRef(aiDelegation);
 
   useEffect(() => {
     stocksRef.current = stocks;
@@ -101,10 +127,30 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     tournamentPortfoliosRef.current = tournamentPortfolios;
   }, [tournamentPortfolios]);
 
+  useEffect(() => {
+    backgroundAgentsRef.current = backgroundAgents;
+  }, [backgroundAgents]);
+
+  useEffect(() => {
+    aiDelegationRef.current = aiDelegation;
+    localStorage.setItem('ai_delegation', JSON.stringify(aiDelegation));
+  }, [aiDelegation]);
+
   // Save main portfolio to localStorage
   useEffect(() => {
     localStorage.setItem('main_portfolio', JSON.stringify(mainPortfolio));
   }, [mainPortfolio]);
+
+  // Helper to push a live activity log
+  const pushActivityLog = (message: string, badgeColor: string = 'var(--accent-purple)') => {
+    const newLog: ActivityLog = {
+      id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      timestamp: new Date().toLocaleTimeString('he-IL'),
+      message,
+      badgeColor
+    };
+    setActivityLogs(prev => [newLog, ...prev.slice(0, 29)]); // Keep last 30 logs
+  };
 
   // Sync with Yahoo Finance Real-time API on mount and every 30 seconds
   useEffect(() => {
@@ -137,6 +183,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       
       if (changed) {
         setStocks(updatedList);
+        pushActivityLog('שערי המניות סונכרנו בהצלחה מול שרת Yahoo Finance', 'var(--accent-cyan)');
       }
     };
 
@@ -155,15 +202,17 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const updatedStocks = updateStockPrices(stocksRef.current);
       setStocks(updatedStocks);
 
-      // 2. Handle active tournament updates
+      // 2. Run AI Agents
       const activeTourId = activeTournamentIdRef.current;
       if (activeTourId) {
-        // A. Decrement time
+        // A. Tournament Active: run tournament agents
+        // Decrement time
         setTournaments(prevTournaments => {
           return prevTournaments.map(t => {
             if (t.id === activeTourId) {
               const newTime = Math.max(0, t.timeRemaining - 2);
               if (newTime === 0 && t.active) {
+                pushActivityLog(`הטורניר "${t.name}" הגיע לסיומו!`, 'var(--trend-down)');
                 return { ...t, timeRemaining: newTime, active: false };
               }
               return { ...t, timeRemaining: newTime };
@@ -174,8 +223,8 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         const currentTour = tournamentsRef.current.find(t => t.id === activeTourId);
         if (currentTour && currentTour.timeRemaining > 0 && currentTour.active) {
-          // B. Run AI agents trading
-          const updatedAgents = runAIAgentTrades(currentTour.agents, updatedStocks);
+          // Run tournament AI trades
+          const { updatedAgents, tradeLogs } = runAIAgentTrades(currentTour.agents, updatedStocks);
           
           setTournaments(prevTournaments => {
             return prevTournaments.map(t => {
@@ -186,7 +235,10 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             });
           });
 
-          // C. Re-evaluate User Portfolio total value
+          // Log bot actions to visual live feed
+          tradeLogs.forEach(log => pushActivityLog(log, 'var(--accent-purple)'));
+
+          // Re-evaluate User Portfolio total value
           const userPort = tournamentPortfoliosRef.current[activeTourId];
           if (userPort) {
             let userAssetsValue = userPort.cashBalance;
@@ -205,6 +257,32 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
               }
             }));
           }
+        }
+      } else {
+        // B. Standard Mode Active: run background agents (to prove they exist in activity logs)
+        const { updatedAgents, tradeLogs } = runAIAgentTrades(backgroundAgentsRef.current, updatedStocks);
+        setBackgroundAgents(updatedAgents);
+        
+        // Push background agent transactions to main log
+        tradeLogs.forEach(log => pushActivityLog(log, 'var(--accent-purple)'));
+
+        // C. Run Copy-Trading AI Delegation if active
+        const activeDelegation = aiDelegationRef.current;
+        if (activeDelegation && activeDelegation.active) {
+          const { delegation: updatedDelegation, transactions, tradeLogs: delegationLogs } = runDelegatedAITrades(activeDelegation, updatedStocks);
+          
+          setAiDelegation(updatedDelegation);
+
+          // Append any delegation transactions to main portfolio logs
+          if (transactions.length > 0) {
+            setMainPortfolio(prev => ({
+              ...prev,
+              transactions: [...transactions, ...prev.transactions]
+            }));
+          }
+
+          // Push delegation logs to live feed
+          delegationLogs.forEach(log => pushActivityLog(log, 'var(--trend-up)'));
         }
       }
     }, 2500);
@@ -288,6 +366,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const profile = { username, avatarColor: randomColor };
     setUserProfile(profile);
     localStorage.setItem('user_profile', JSON.stringify(profile));
+    pushActivityLog(`המשתמש ${username} נכנס למערכת`, 'var(--accent-cyan)');
   };
 
   const logout = () => {
@@ -359,6 +438,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     newPortfolio.totalValue = Number(totalVal.toFixed(2));
 
     updateActivePortfolio(newPortfolio);
+    pushActivityLog(`ביצעת קנייה של ${quantity} מניות ${symbol} במחיר $${stock.price}`, 'var(--trend-up)');
   };
 
   // Sell Stock Action
@@ -416,6 +496,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     newPortfolio.totalValue = Number(totalVal.toFixed(2));
 
     updateActivePortfolio(newPortfolio);
+    pushActivityLog(`ביצעת מכירה של ${quantity} מניות ${symbol} במחיר $${stock.price}`, 'var(--trend-down)');
   };
 
   // Join Tournament Action
@@ -453,6 +534,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       }));
       setActiveTournamentId(id);
+      pushActivityLog(`הצטרפת לטורניר ${targetTour.name}!`, 'var(--accent-purple)');
     }
   };
 
@@ -462,14 +544,16 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const resetMainPortfolio = () => {
     setMainPortfolio(INITIAL_PORTFOLIO);
+    setAiDelegation(null);
     localStorage.removeItem('main_portfolio');
+    localStorage.removeItem('ai_delegation');
+    pushActivityLog('תיק ההשקעות אופס מחדש ל-$100,000', 'var(--text-muted)');
   };
 
   const searchAndAddStock = async (symbol: string): Promise<boolean> => {
     const cleanSymbol = symbol.trim().toUpperCase();
     if (!cleanSymbol) return false;
 
-    // Check if already in list
     const existing = stocks.find(s => s.symbol === cleanSymbol);
     if (existing) {
       setSelectedStockSymbol(cleanSymbol);
@@ -492,6 +576,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         setStocks(prev => [...prev, newStock]);
         setSelectedStockSymbol(cleanSymbol);
+        pushActivityLog(`נוספה מניה חדשה למעקב: ${cleanSymbol} בשער של $${realData.price}`, 'var(--accent-cyan)');
         return true;
       }
       return false;
@@ -499,6 +584,50 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       console.error(e);
       return false;
     }
+  };
+
+  // AI Copy-Trading Delegation logic
+  const delegateToAI = (strategy: AIStrategy, amount: number) => {
+    if (amount <= 0) return;
+    if (mainPortfolio.cashBalance < amount) {
+      alert('אין מספיק מזומן בקופה כדי להקצות לניהול הבוט!');
+      return;
+    }
+
+    // Deduct cash from main portfolio
+    setMainPortfolio(prev => ({
+      ...prev,
+      cashBalance: Number((prev.cashBalance - amount).toFixed(2))
+    }));
+
+    // Activate delegation
+    const delegation: AIDelegation = {
+      strategy,
+      allocatedCash: amount,
+      holdings: {},
+      totalValue: amount,
+      initialValue: amount,
+      active: true
+    };
+
+    setAiDelegation(delegation);
+    pushActivityLog(`הקצית $${amount.toLocaleString()} לניהול אקטיבי של סוכן AI באסטרטגיית ${strategy}`, 'var(--accent-purple)');
+  };
+
+  const stopAIDelegation = () => {
+    const activeDel = aiDelegation;
+    if (!activeDel) return;
+
+    // Refund current total value back to cash
+    const refundAmount = activeDel.totalValue;
+
+    setMainPortfolio(prev => ({
+      ...prev,
+      cashBalance: Number((prev.cashBalance + refundAmount).toFixed(2))
+    }));
+
+    setAiDelegation(null);
+    pushActivityLog(`ניהול ה-AI בוטל. סך של $${refundAmount.toLocaleString()} הוחזר ליתרת המזומן הראשית (האחזקות חוסלו)`, 'var(--text-muted)');
   };
 
   // Live value update for main portfolio whenever stock prices tick
@@ -513,6 +642,11 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     });
 
+    // Add value of AI delegation if active
+    if (aiDelegation && aiDelegation.active) {
+      totalVal += aiDelegation.totalValue;
+    }
+
     const updatedVal = Number(totalVal.toFixed(2));
     if (updatedVal !== mainPortfolio.totalValue) {
       setMainPortfolio(prev => ({
@@ -520,7 +654,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         totalValue: updatedVal
       }));
     }
-  }, [stocks, mainPortfolio.cashBalance, mainPortfolio.holdings, activeTournamentId]);
+  }, [stocks, mainPortfolio.cashBalance, mainPortfolio.holdings, activeTournamentId, aiDelegation]);
 
   return (
     <TradingContext.Provider
@@ -544,6 +678,10 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setSelectedStockSymbol,
         resetMainPortfolio,
         searchAndAddStock,
+        aiDelegation,
+        activityLogs,
+        delegateToAI,
+        stopAIDelegation
       }}
     >
       {children}

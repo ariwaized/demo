@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useTrading } from '../context/TradingContext';
 import { TradingChart } from './TradingChart';
-import { TrendingUp, TrendingDown, DollarSign, Briefcase, Award, Search } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Briefcase, Award, Search, Activity } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const {
@@ -16,7 +16,8 @@ export const Dashboard: React.FC = () => {
     sellStock,
     setSelectedStockSymbol,
     leaveTournament,
-    searchAndAddStock
+    searchAndAddStock,
+    activityLogs
   } = useTrading();
 
   const [tradeQuantity, setTradeQuantity] = useState<number>(10);
@@ -306,6 +307,43 @@ export const Dashboard: React.FC = () => {
               מכירת דמו
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Real-time AI Activity Feed */}
+      <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }} id="live-activity-feed-panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <Activity size={20} className="trend-up-text" />
+          <h3 style={{ fontSize: '1.2rem', fontWeight: '700' }}>פיד פעילות ועסקאות AI בזמן אמת (הוכחת ביצועים)</h3>
+        </div>
+        
+        <div style={{
+          maxHeight: '180px',
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px',
+          background: 'rgba(0,0,0,0.15)',
+          padding: '12px 16px',
+          borderRadius: 'var(--border-radius-sm)',
+          border: '1px solid var(--glass-border)',
+          fontFamily: 'monospace',
+          fontSize: '0.85rem'
+        }}>
+          {activityLogs.length === 0 ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px' }}>
+              ממתין לפעולות מסחר ראשונות של הסוכנים...
+            </div>
+          ) : (
+            activityLogs.map(log => (
+              <div key={log.id} style={{ display: 'flex', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.01)', paddingBottom: '4px' }}>
+                <span style={{ color: 'var(--text-muted)' }}>[{log.timestamp}]</span>
+                <span style={{
+                  color: log.badgeColor === 'var(--trend-up)' ? 'var(--trend-up)' : log.badgeColor === 'var(--trend-down)' ? 'var(--trend-down)' : 'var(--text-primary)'
+                }}>{log.message}</span>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>
