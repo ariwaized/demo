@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import type { Stock, Portfolio, Holding, Transaction, Tournament, LeaderboardEntry, UserProfile, AIDelegation, ActivityLog, AIStrategy } from '../types';
-import { INITIAL_STOCKS, updateStockPrices, fetchRealStockData } from '../utils/stockEngine';
+import { INITIAL_STOCKS, fetchRealStockQuotes, fetchRealStockChart } from '../utils/stockEngine';
 import { INITIAL_AGENTS, runAIAgentTrades, runDelegatedAITrades } from '../utils/aiAgents';
 
 interface TradingContextType {
@@ -53,7 +53,6 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [selectedAgentIdForModal, setSelectedAgentIdForModal] = useState<string | null>(null);
 
-  // Background bots for standard trading mode (persistent, non-tournament)
   const [backgroundAgents, setBackgroundAgents] = useState<any[]>(() => {
     return INITIAL_AGENTS.map(agent => ({
       ...agent,
@@ -94,16 +93,13 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [tournamentPortfolios, setTournamentPortfolios] = useState<{ [id: string]: Portfolio }>({});
   const [selectedStockSymbol, setSelectedStockSymbol] = useState<string>('NVDA');
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-
-  // AI Copy-Trading Delegation states
   const [aiDelegation, setAiDelegation] = useState<AIDelegation | null>(() => {
     const saved = localStorage.getItem('ai_delegation');
     return saved ? JSON.parse(saved) : null;
   });
-
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
 
-  // Using refs to prevent stale closures in interval
+  // Refs to avoid stale closures
   const stocksRef = useRef(stocks);
   const activeTournamentIdRef = useRef(activeTournamentId);
   const tournamentsRef = useRef(tournaments);
@@ -136,12 +132,10 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem('ai_delegation', JSON.stringify(aiDelegation));
   }, [aiDelegation]);
 
-  // Save main portfolio to localStorage
   useEffect(() => {
     localStorage.setItem('main_portfolio', JSON.stringify(mainPortfolio));
   }, [mainPortfolio]);
 
-  // Helper to push a live activity log
   const pushActivityLog = (message: string, badgeColor: string = 'var(--accent-purple)') => {
     const newLog: ActivityLog = {
       id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -149,70 +143,89 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       message,
       badgeColor
     };
-    setActivityLogs(prev => [newLog, ...prev.slice(0, 29)]); // Keep last 30 logs
+    setActivityLogs(prev => [newLog, ...prev.slice(0, 29)]);
   };
 
-  // Sync with Yahoo Finance Real-time API on mount and every 30 seconds
+  // Pull actual 1-day EOD/Intraday baseline charts on mount
   useEffect(() => {
-    const syncRealMarketPrices = async () => {
-      console.log('Syncing baseline prices with Yahoo Finance...');
-      const symbols = stocksRef.current.map(s => s.symbol);
+    const initializeBaselineCharts = async () => {
+      console.log('Loading baseline chart histories from Yahoo Finance...');
+      const defaultSymbols = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN'];
       const updatedList = [...stocksRef.current];
       
       let changed = false;
-      for (let i = 0; i < symbols.length; i++) {
-        const symbol = symbols[i];
-        const realData = await fetchRealStockData(symbol);
-        
-        if (realData) {
+      for (let i = 0; i < defaultSymbols.length; i++) {
+        const symbol = defaultSymbols[i];
+        const chartData = await fetchRealStockChart(symbol);
+        if (chartData) {
           const idx = updatedList.findIndex(s => s.symbol === symbol);
           if (idx !== -1) {
             updatedList[idx] = {
               ...updatedList[idx],
-              previousPrice: updatedList[idx].price,
-              price: realData.price,
-              history: realData.history,
-              high: realData.high,
-              low: realData.low,
-              change24h: realData.change24h
+              price: chartData.price,
+              previousPrice: chartData.price,
+              history: chartData.history,
+              high: chartData.high,
+              low: chartData.low,
+              change24h: chartData.change24h
             };
             changed = true;
           }
         }
       }
-      
       if (changed) {
         setStocks(updatedList);
-        pushActivityLog('שערי המניות סונכרנו בהצלחה מול שרת Yahoo Finance', 'var(--accent-cyan)');
+        pushActivityLog('שערי הפתיחה וההיסטוריה הנטענו מ-Yahoo Finance', 'var(--accent-cyan)');
       }
     };
-
-    // Initial sync
-    syncRealMarketPrices();
-
-    // 30 seconds background polling
-    const syncInterval = setInterval(syncRealMarketPrices, 30000);
-    return () => clearInterval(syncInterval);
+    initializeBaselineCharts();
   }, []);
 
-  // Core Price Micro-ticks & Agent Simulator Loop (Runs every 2.5 seconds)
+  // Core 100% Real-time Quote polling loop (every 5 seconds)
   useEffect(() => {
-    const timer = setInterval(() => {
-      // 1. Update stock prices with micro-movements
-      const updatedStocks = updateStockPrices(stocksRef.current);
+    const fetchLatestQuotesLoop = async () => {
+      const symbols = stocksRef.current.map(s => s.symbol);
+      if (symbols.length === 0) return;
+
+      const quotes = await fetchRealStockQuotes(symbols);
+      if (!quotes) return;
+
+      const updatedStocks = stocksRef.current.map(stock => {
+        const quote = quotes.find((q: any) => q.symbol === stock.symbol);
+        if (!quote) return stock;
+
+        const livePrice = quote.regularMarketPrice;
+        const prevPrice = stock.price;
+        
+        // Append price to history if it changed
+        let newHistory = [...stock.history];
+        if (livePrice !== prevPrice) {
+          newHistory = [...stock.history.slice(1), livePrice];
+        }
+
+        return {
+          ...stock,
+          previousPrice: prevPrice,
+          price: livePrice,
+          history: newHistory,
+          high: quote.regularMarketDayHigh || stock.high,
+          low: quote.regularMarketDayLow || stock.low,
+          change24h: Number((quote.regularMarketChangePercent || 0).toFixed(2))
+        };
+      });
+
       setStocks(updatedStocks);
 
-      // 2. Run AI Agents
+      // --- Trigger AI Agent decisions based on actual live quote updates ---
       const activeTourId = activeTournamentIdRef.current;
       if (activeTourId) {
-        // A. Tournament Active: run tournament agents
-        // Decrement time
+        // A. Tournament active
         setTournaments(prevTournaments => {
           return prevTournaments.map(t => {
             if (t.id === activeTourId) {
-              const newTime = Math.max(0, t.timeRemaining - 2);
+              const newTime = Math.max(0, t.timeRemaining - 5); // Dec 5s matching loop
               if (newTime === 0 && t.active) {
-                pushActivityLog(`הטורניר "${t.name}" הגיע לסיומו!`, 'var(--trend-down)');
+                pushActivityLog(`הטורניר "${t.name}" הסתיים!`, 'var(--trend-down)');
                 return { ...t, timeRemaining: newTime, active: false };
               }
               return { ...t, timeRemaining: newTime };
@@ -223,7 +236,6 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         const currentTour = tournamentsRef.current.find(t => t.id === activeTourId);
         if (currentTour && currentTour.timeRemaining > 0 && currentTour.active) {
-          // Run tournament AI trades
           const { updatedAgents, tradeLogs } = runAIAgentTrades(currentTour.agents, updatedStocks);
           
           setTournaments(prevTournaments => {
@@ -235,7 +247,6 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             });
           });
 
-          // Log bot actions to visual live feed
           tradeLogs.forEach(log => pushActivityLog(log, 'var(--accent-purple)'));
 
           // Re-evaluate User Portfolio total value
@@ -259,35 +270,31 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
         }
       } else {
-        // B. Standard Mode Active: run background agents (to prove they exist in activity logs)
+        // B. Standard mode
         const { updatedAgents, tradeLogs } = runAIAgentTrades(backgroundAgentsRef.current, updatedStocks);
         setBackgroundAgents(updatedAgents);
-        
-        // Push background agent transactions to main log
         tradeLogs.forEach(log => pushActivityLog(log, 'var(--accent-purple)'));
 
-        // C. Run Copy-Trading AI Delegation if active
+        // C. Delegated AI copy-trading
         const activeDelegation = aiDelegationRef.current;
         if (activeDelegation && activeDelegation.active) {
           const { delegation: updatedDelegation, transactions, tradeLogs: delegationLogs } = runDelegatedAITrades(activeDelegation, updatedStocks);
-          
           setAiDelegation(updatedDelegation);
 
-          // Append any delegation transactions to main portfolio logs
           if (transactions.length > 0) {
             setMainPortfolio(prev => ({
               ...prev,
               transactions: [...transactions, ...prev.transactions]
             }));
           }
-
-          // Push delegation logs to live feed
           delegationLogs.forEach(log => pushActivityLog(log, 'var(--trend-up)'));
         }
       }
-    }, 2500);
+    };
 
-    return () => clearInterval(timer);
+    // Poll actual API every 5 seconds (fast enough for real-time feel, safe for limits)
+    const quoteInterval = setInterval(fetchLatestQuotesLoop, 5000);
+    return () => clearInterval(quoteInterval);
   }, []);
 
   // Update Leaderboard whenever portfolio values or agent values change
@@ -561,7 +568,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     try {
-      const realData = await fetchRealStockData(cleanSymbol);
+      const realData = await fetchRealStockChart(cleanSymbol);
       if (realData) {
         const newStock: Stock = {
           symbol: realData.symbol,
@@ -627,7 +634,7 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }));
 
     setAiDelegation(null);
-    pushActivityLog(`ניהול ה-AI בוטל. סך של $${refundAmount.toLocaleString()} הוחזר ליתרת המזומן הראשית (האחזקות חוסלו)`, 'var(--text-muted)');
+    pushActivityLog(`ניהול ה-AI בבוטל. סך של $${refundAmount.toLocaleString()} הוחזר ליתרת המזומן הראשית (האחזקות חוסלו)`, 'var(--text-muted)');
   };
 
   // Live value update for main portfolio whenever stock prices tick
@@ -642,7 +649,6 @@ export const TradingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     });
 
-    // Add value of AI delegation if active
     if (aiDelegation && aiDelegation.active) {
       totalVal += aiDelegation.totalValue;
     }

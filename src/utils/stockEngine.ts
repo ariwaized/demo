@@ -54,12 +54,40 @@ export const INITIAL_STOCKS: Stock[] = [
 ];
 
 /**
- * Fetches real stock data from Yahoo Finance via a free CORS proxy
+ * Fetches real-time stock quotes for a list of symbols in a single batch call
  */
-export async function fetchRealStockData(symbol: string): Promise<{ symbol: string, name: string, price: number, history: number[], high: number, low: number, change24h: number } | null> {
+export async function fetchRealStockQuotes(symbols: string[]): Promise<any[] | null> {
+  try {
+    if (symbols.length === 0) return [];
+    
+    const cleanSymbols = symbols.map(s => s.trim().toUpperCase()).join(',');
+    const yahooUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${cleanSymbols}`;
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`;
+    
+    const res = await fetch(proxyUrl);
+    if (!res.ok) return null;
+    
+    const wrapper = await res.json();
+    if (!wrapper.contents) return null;
+    
+    const parsed = JSON.parse(wrapper.contents);
+    if (!parsed.quoteResponse || !parsed.quoteResponse.result) return null;
+    
+    return parsed.quoteResponse.result; // returns array of stock quote objects
+  } catch (error) {
+    console.warn('Error fetching batch real stock quotes:', error);
+    return null;
+  }
+}
+
+/**
+ * Fetches historical 1-day chart data to initialize the visual chart
+ */
+export async function fetchRealStockChart(symbol: string): Promise<{ symbol: string, name: string, price: number, history: number[], high: number, low: number, change24h: number } | null> {
   try {
     const cleanSymbol = symbol.trim().toUpperCase();
-    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?interval=2m&range=1d`;
+    // Fetch 5-minute interval for the last 1 day of trading
+    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?interval=5m&range=1d`;
     const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`;
     
     const res = await fetch(proxyUrl);
@@ -120,59 +148,7 @@ export async function fetchRealStockData(symbol: string): Promise<{ symbol: stri
       change24h
     };
   } catch (error) {
-    console.warn(`Error fetching real Yahoo Finance data for ${symbol}:`, error);
+    console.warn(`Error fetching real Yahoo Finance chart for ${symbol}:`, error);
     return null;
   }
-}
-
-export function updateStockPrices(stocks: Stock[]): Stock[] {
-  return stocks.map(stock => {
-    // Volatility reduced by ~90% for realistic micro-ticks (e.g. 0.05% instead of 1.5% per 2.5s)
-    let volatility = 0.0004; 
-    let drift = 0.00002;
-
-    switch (stock.symbol) {
-      case 'TSLA':
-        volatility = 0.0009; // ~0.09% max move
-        drift = 0.00001;
-        break;
-      case 'NVDA':
-        volatility = 0.0011; // ~0.11% max move
-        drift = 0.00005;
-        break;
-      case 'MSFT':
-        volatility = 0.0003; // ~0.03% max move
-        drift = 0.00001;
-        break;
-      case 'AAPL':
-        volatility = 0.00035; // ~0.035% max move
-        drift = 0.00001;
-        break;
-      case 'AMZN':
-        volatility = 0.0005; // ~0.05% max move
-        drift = 0.00002;
-        break;
-    }
-
-    const changePercent = drift + volatility * (Math.random() - 0.5);
-    const newPrice = Number((stock.price * (1 + changePercent)).toFixed(2));
-    const clampedPrice = Math.max(1.00, newPrice);
-
-    const newHistory = [...stock.history.slice(1), clampedPrice];
-    const newHigh = Math.max(stock.high, clampedPrice);
-    const newLow = Math.min(stock.low, clampedPrice);
-
-    const firstPrice = newHistory[0] || clampedPrice;
-    const change24h = Number((((clampedPrice - firstPrice) / firstPrice) * 100).toFixed(2));
-
-    return {
-      ...stock,
-      previousPrice: stock.price,
-      price: clampedPrice,
-      history: newHistory,
-      change24h,
-      high: newHigh,
-      low: newLow
-    };
-  });
 }
