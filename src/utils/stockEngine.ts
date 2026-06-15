@@ -127,29 +127,30 @@ export async function fetchRealStockData(symbol: string): Promise<{ symbol: stri
 
 export function updateStockPrices(stocks: Stock[]): Stock[] {
   return stocks.map(stock => {
-    let volatility = 0.005; // lower volatility to simulate micro-ticks on top of real prices
-    let drift = 0.0001;
+    // Volatility reduced by ~90% for realistic micro-ticks (e.g. 0.05% instead of 1.5% per 2.5s)
+    let volatility = 0.0004; 
+    let drift = 0.00002;
 
     switch (stock.symbol) {
       case 'TSLA':
-        volatility = 0.012;
-        drift = 0.0001;
+        volatility = 0.0009; // ~0.09% max move
+        drift = 0.00001;
         break;
       case 'NVDA':
-        volatility = 0.015;
-        drift = 0.0005;
+        volatility = 0.0011; // ~0.11% max move
+        drift = 0.00005;
         break;
       case 'MSFT':
-        volatility = 0.004;
-        drift = 0.0002;
+        volatility = 0.0003; // ~0.03% max move
+        drift = 0.00001;
         break;
       case 'AAPL':
-        volatility = 0.005;
-        drift = 0.0001;
+        volatility = 0.00035; // ~0.035% max move
+        drift = 0.00001;
         break;
       case 'AMZN':
-        volatility = 0.006;
-        drift = 0.0003;
+        volatility = 0.0005; // ~0.05% max move
+        drift = 0.00002;
         break;
     }
 
